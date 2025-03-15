@@ -233,7 +233,7 @@ void IWebViewImpl::LoadFile(const char* fileName, const char* _Nullable bundleID
     WDL_String fileNameWeb("web/");
     fileNameWeb.Append(fileName);
     
-    GetResourcePathFromBundle(fileNameWeb.Get(), fileNameWeb.get_fileext() + 1 /* remove . */, fullPath, bundleID);
+    GetResourcePathFromBundle(fileNameWeb.Get(), fileNameWeb.get_fileext() + 1, fullPath, bundleID);
   }
   else
   {
@@ -242,44 +242,43 @@ void IWebViewImpl::LoadFile(const char* fileName, const char* _Nullable bundleID
   
   NSString* pPath = [NSString stringWithUTF8String:fullPath.Get()];
   
-  fullPath.remove_filepart();
-  mWebRoot.Set(fullPath.Get());
-
-  // If a custom url scheme is provided use it, otherwise use a file Url
-  NSString* customUrlScheme = [NSString stringWithUTF8String:mIWebView->GetCustomUrlScheme()];
-  const BOOL useCustomUrlScheme = [customUrlScheme length];
-  NSString* urlScheme = @"file:";
+  // If no bundleID is provided, treat fileName as an absolute path.
+  if (bundleID == nullptr || strlen(bundleID) == 0)
+  {
+    NSURL* pageUrl = [NSURL fileURLWithPath:pPath];
+    [mWKWebView loadFileURL:pageUrl allowingReadAccessToURL:pageUrl];
+    return;
+  }
   
+  // For bundle-based resources, get the directory part.
+  NSString* directoryPath = [pPath stringByDeletingLastPathComponent];
+  mWebRoot.Set([directoryPath UTF8String]);
+  
+  // Handle custom URL scheme.
+  NSString* customUrlScheme = [NSString stringWithUTF8String:mIWebView->GetCustomUrlScheme()];
+  const BOOL useCustomUrlScheme = ([customUrlScheme length] > 0);
+  NSString* urlScheme = @"file:";
   if (useCustomUrlScheme)
   {
     urlScheme = [urlScheme stringByReplacingOccurrencesOfString:@"file" withString:customUrlScheme];
   }
   
-  NSString* webroot = [urlScheme stringByAppendingString:[pPath stringByReplacingOccurrencesOfString:[NSString stringWithUTF8String:fileName] withString:@""]];
-
-  NSURL* pageUrl = [NSURL URLWithString:[webroot stringByAppendingString:[NSString stringWithUTF8String:fileName]] relativeToURL:nil];
-
+  // Build the final URL string.
+  NSString* webroot = [pPath stringByDeletingLastPathComponent];
+  NSString* fileNameStr = [NSString stringWithUTF8String:fileName];
+  NSString* urlString = [webroot stringByAppendingPathComponent:fileNameStr];
+  
+  NSURL* pageUrl = nil;
   if (useCustomUrlScheme)
   {
-#if defined OS_MAC && defined _DEBUG
-    NSString* homeDir = NSHomeDirectory();
-    
-    if ([homeDir containsString:@"Library/Containers/"])
-    {
-      NSString* absolutePath = [[pageUrl path] stringByStandardizingPath];
-      if (![absolutePath hasPrefix:homeDir]) {
-        NSLog(@"Warning: Attempting to load URL outside container directory in sandboxed app: %@", absolutePath);
-      }
-    }
-#endif
-    
+    pageUrl = [NSURL URLWithString:urlString relativeToURL:nil];
     NSURLRequest* req = [[NSURLRequest alloc] initWithURL:pageUrl];
     [mWKWebView loadRequest:req];
   }
   else
   {
-    NSURL* rootUrl = [NSURL URLWithString:webroot relativeToURL:nil];
-    [mWKWebView loadFileURL:pageUrl allowingReadAccessToURL:rootUrl];
+    pageUrl = [NSURL fileURLWithPath:urlString];
+    [mWKWebView loadFileURL:pageUrl allowingReadAccessToURL:pageUrl];
   }
 }
 
